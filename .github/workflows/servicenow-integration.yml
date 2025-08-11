@@ -32,7 +32,7 @@ jobs:
       run: |
         # Create case in ServiceNow
         RESPONSE=$(curl -s -X POST \
-          "https://${SERVICENOW_INSTANCE}/api/now/table/sn_customerservice_case" \
+          "https://${SERVICENOW_INSTANCE}/api/now/table/sc_request" \
           -H "Accept: application/json" \
           -H "Content-Type: application/json" \
           -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)" \
@@ -67,7 +67,7 @@ jobs:
           echo "Check #$i - Polling case status..."
           
           RESPONSE=$(curl -s -X GET \
-            "https://${SERVICENOW_INSTANCE}/api/now/table/sn_customerservice_case/${CASE_SYS_ID}" \
+            "https://${SERVICENOW_INSTANCE}/api/now/table/sc_request/${CASE_SYS_ID}" \
             -H "Accept: application/json" \
             -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)")
           
@@ -126,7 +126,7 @@ jobs:
         WORK_NOTES="GitHub Action completed with status: $STATUS\nWorkflow URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
         
         curl -s -X PUT \
-          "https://${SERVICENOW_INSTANCE}/api/now/table/sn_customerservice_case/${CASE_SYS_ID}" \
+          "https://${SERVICENOW_INSTANCE}/api/now/table/sc_request/${CASE_SYS_ID}" \
           -H "Accept: application/json" \
           -H "Content-Type: application/json" \
           -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)" \
