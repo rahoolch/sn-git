@@ -1,156 +1,189 @@
-name: ServiceNow sc_request Test
+name: Debug ServiceNow Network Issues
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
-
-env:
-  SERVICENOW_INSTANCE: 'dev195428.service-now.com'
-  SERVICENOW_USERNAME: 'git_test'
-  SERVICENOW_PASSWORD: '%xl59+k5I@>=JUHRM[*Jl[7zx&-4,!5]#0iKg=[2?K+8@S%^Lh,eacgO^!$bzAwM-KCsTbLDtnK7L:%75OyN8fleF#hN.'
 
 jobs:
-  test-servicenow:
+  debug-network:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Debug Secret Values (Safe Method)
+    - name: System Information
       run: |
-        echo "Checking if secrets are properly set..."
+        echo "=== System Information ==="
+        uname -a
+        echo ""
+        echo "=== curl version ==="
+        curl --version
+        echo ""
+        echo "=== Network configuration ==="
+        ip route show
+        echo ""
         
-        # Check if variables are set (without revealing values)
-        if [ -z "$SERVICENOW_INSTANCE" ]; then
-          echo "❌ SERVICENOW_INSTANCE is empty or not set"
-        else
-          echo "✅ SERVICENOW_INSTANCE is set (length: ${#SERVICENOW_INSTANCE})"
-        fi
-        
-        if [ -z "$SERVICENOW_USERNAME" ]; then
-          echo "❌ SERVICENOW_USERNAME is empty or not set"
-        else
-          echo "✅ SERVICENOW_USERNAME is set (length: ${#SERVICENOW_USERNAME})"
-        fi
-        
-        if [ -z "$SERVICENOW_PASSWORD" ]; then
-          echo "❌ SERVICENOW_PASSWORD is empty or not set"
-        else
-          echo "✅ SERVICENOW_PASSWORD is set (length: ${#SERVICENOW_PASSWORD})"
-        fi
-        
-        # Show URL structure (without revealing full domain)
-        echo "URL will be: https://${SERVICENOW_INSTANCE:0:5}***${SERVICENOW_INSTANCE: -4}/api/now/table/sys_user"
-        
-    - name: Test ServiceNow Connection
+    - name: DNS Resolution Test
+      env:
+        INSTANCE: "dev195428.service-now.com"  # Replace with your real instance
       run: |
-        echo "Testing ServiceNow connection..."
-        echo "Instance: $SERVICENOW_INSTANCE"
-        echo "Username: $SERVICENOW_USERNAME"
-        echo "Testing URL: https://${SERVICENOW_INSTANCE}/api/now/table/sys_user?sysparm_limit=1"
+        echo "=== DNS Resolution Test ==="
+        echo "Testing DNS resolution for: $INSTANCE"
         
-        # Test with verbose output and save response
-        RESPONSE=$(curl -v -s -w "\nHTTP_CODE:%{http_code}\nTIME_TOTAL:%{time_total}" \
-          "https://${SERVICENOW_INSTANCE}/api/now/table/sys_user?sysparm_limit=1" \
-          -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)" \
-          2>&1)
+        # Test DNS resolution
+        if nslookup "$INSTANCE"; then
+          echo "✅ DNS resolution successful"
+        else
+          echo "❌ DNS resolution failed"
+          exit 1
+        fi
+        
+        # Get IP address
+        IP=$(nslookup "$INSTANCE" | grep -A1 "Name:" | tail -n1 | awk '{print $2}')
+        echo "Resolved IP: $IP"
+        
+    - name: Basic Connectivity Test
+      env:
+        INSTANCE: "dev195428.service-now.com"  # Replace with your real instance
+      run: |
+        echo "=== Basic Connectivity Test ==="
+        
+        # Test basic HTTP connectivity
+        echo "Testing basic connectivity to $INSTANCE..."
+        
+        if nc -z -w5 "$INSTANCE" 443; then
+          echo "✅ Port 443 (HTTPS) is reachable"
+        else
+          echo "❌ Port 443 (HTTPS) is not reachable"
+          exit 1
+        fi
+        
+        if nc -z -w5 "$INSTANCE" 80; then
+          echo "✅ Port 80 (HTTP) is reachable"
+        else
+          echo "⚠️ Port 80 (HTTP) is not reachable (may be normal)"
+        fi
+        
+    - name: SSL Certificate Test
+      env:
+        INSTANCE: "dev195428.service-now.com"  # Replace with your real instance
+      run: |
+        echo "=== SSL Certificate Test ==="
+        
+        echo "Testing SSL certificate for $INSTANCE..."
+        openssl s_client -connect "$INSTANCE:443" -servername "$INSTANCE" </dev/null 2>/dev/null | openssl x509 -noout -dates
+        
+    - name: HTTP Response Test
+      env:
+        INSTANCE: "dev195428.service-now.com"  # Replace with your real instance
+      run: |
+        echo "=== HTTP Response Test ==="
+        
+        # Test basic HTTP response
+        echo "Testing basic HTTP response..."
+        
+        RESPONSE=$(curl -v -s -w "\nHTTP_CODE:%{http_code}\nTIME_CONNECT:%{time_connect}\nTIME_TOTAL:%{time_total}" \
+          --connect-timeout 30 \
+          --max-time 60 \
+          "https://$INSTANCE/" 2>&1)
         
         echo "Full response:"
         echo "$RESPONSE"
         
         HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
-        echo "Extracted HTTP Code: $HTTP_CODE"
+        echo "HTTP Code: $HTTP_CODE"
+        
+    - name: ServiceNow Login Page Test
+      env:
+        INSTANCE: "dev195428.service-now.com"  # Replace with your real instance
+      run: |
+        echo "=== ServiceNow Login Page Test ==="
+        
+        echo "Testing ServiceNow login page..."
+        
+        RESPONSE=$(curl -v -s -w "\nHTTP_CODE:%{http_code}" \
+          --connect-timeout 30 \
+          --max-time 60 \
+          -H "User-Agent: Mozilla/5.0 (compatible; GitHub-Actions)" \
+          "https://$INSTANCE/login.do" 2>&1)
+        
+        echo "Login page response:"
+        echo "$RESPONSE"
+        
+        HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+        echo "Login page HTTP Code: $HTTP_CODE"
         
         if [ "$HTTP_CODE" = "200" ]; then
-          echo "✅ ServiceNow connection successful"
+          echo "✅ ServiceNow login page accessible"
         else
-          echo "❌ ServiceNow connection failed (HTTP $HTTP_CODE)"
-          echo "Check the logs above for detailed error information"
-          exit 1
+          echo "❌ ServiceNow login page not accessible (HTTP $HTTP_CODE)"
         fi
         
-    - name: Create Test Request
-      id: create_request
+    - name: API Endpoint Test (No Auth)
+      env:
+        INSTANCE: "dev195428.service-now.com"  # Replace with your real instance
       run: |
-        echo "Creating test request..."
-        RESPONSE=$(curl -s -X POST \
-          "https://${SERVICENOW_INSTANCE}/api/now/table/sc_request" \
+        echo "=== API Endpoint Test (No Auth) ==="
+        
+        echo "Testing API endpoint without authentication..."
+        
+        RESPONSE=$(curl -v -s -w "\nHTTP_CODE:%{http_code}" \
+          --connect-timeout 30 \
+          --max-time 60 \
           -H "Accept: application/json" \
-          -H "Content-Type: application/json" \
-          -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)" \
-          -d '{
-            "short_description": "GitHub Test Request - '"${{ github.repository }}"'",
-            "description": "Test request from GitHub Actions\nRepository: '"${{ github.repository }}"'\nCommit: '"${{ github.sha }}"'\nBranch: '"${{ github.ref_name }}"'",
-            "priority": "4",
-            "state": "-5",
-            "requested_for": "'"${SERVICENOW_USERNAME}"'",
-            "request_state": "submitted_for_approval"
-          }')
+          -H "User-Agent: GitHub-Actions-Test" \
+          "https://$INSTANCE/api/now/table/sys_user?sysparm_limit=1" 2>&1)
         
-        REQUEST_NUMBER=$(echo $RESPONSE | jq -r '.result.number')
-        REQUEST_SYS_ID=$(echo $RESPONSE | jq -r '.result.sys_id')
+        echo "API response (no auth):"
+        echo "$RESPONSE"
         
-        if [ "$REQUEST_NUMBER" != "null" ]; then
-          echo "✅ Request created: $REQUEST_NUMBER"
-          echo "request_number=$REQUEST_NUMBER" >> $GITHUB_OUTPUT
-          echo "request_sys_id=$REQUEST_SYS_ID" >> $GITHUB_OUTPUT
+        HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+        echo "API HTTP Code (no auth): $HTTP_CODE"
+        
+        # Should get 401 (unauthorized) - which means the endpoint is reachable
+        if [ "$HTTP_CODE" = "401" ]; then
+          echo "✅ API endpoint is reachable (401 unauthorized is expected)"
         else
-          echo "❌ Failed to create request"
-          echo "Response: $RESPONSE"
-          exit 1
+          echo "⚠️ Unexpected response from API endpoint: $HTTP_CODE"
         fi
         
-    - name: Read Request Back
+    - name: API Endpoint Test (With Auth)
+      env:
+        INSTANCE: "dev195428.service-now.com"  # Replace with your real instance
+        USERNAME: "git_test"  # Replace with your real username
+        PASSWORD: "%xl59+k5I@>=JUHRM[*Jl[7zx&-4,!5]#0iKg=[2?K+8@S%^Lh,eacgO^!$bzAwM-KCsTbLDtnK7L:%75OyN8fleF#hN."  # Replace with your real password
       run: |
-        echo "Reading request back..."
-        REQUEST_SYS_ID="${{ steps.create_request.outputs.request_sys_id }}"
+        echo "=== API Endpoint Test (With Auth) ==="
         
-        RESPONSE=$(curl -s -X GET \
-          "https://${SERVICENOW_INSTANCE}/api/now/table/sc_request/${REQUEST_SYS_ID}" \
+        echo "Testing API endpoint with authentication..."
+        
+        # Create base64 auth
+        AUTH_HEADER=$(echo -n "$USERNAME:$PASSWORD" | base64)
+        echo "Auth header created (length: ${#AUTH_HEADER})"
+        
+        RESPONSE=$(curl -v -s -w "\nHTTP_CODE:%{http_code}\nTIME_CONNECT:%{time_connect}\nTIME_TOTAL:%{time_total}" \
+          --connect-timeout 30 \
+          --max-time 60 \
           -H "Accept: application/json" \
-          -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)")
+          -H "Authorization: Basic $AUTH_HEADER" \
+          -H "User-Agent: GitHub-Actions-Test" \
+          "https://$INSTANCE/api/now/table/sys_user?sysparm_limit=1" 2>&1)
         
-        REQUEST_STATE=$(echo $RESPONSE | jq -r '.result.request_state')
-        APPROVAL=$(echo $RESPONSE | jq -r '.result.approval // "not_requested"')
+        echo "API response (with auth):"
+        echo "$RESPONSE"
         
-        echo "✅ Request read successfully"
-        echo "Request Number: ${{ steps.create_request.outputs.request_number }}"
-        echo "Request State: $REQUEST_STATE"
-        echo "Approval Status: $APPROVAL"
+        HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+        TIME_CONNECT=$(echo "$RESPONSE" | grep "TIME_CONNECT:" | cut -d: -f2)
+        TIME_TOTAL=$(echo "$RESPONSE" | grep "TIME_TOTAL:" | cut -d: -f2)
         
-    - name: Update Request with Test Results
-      run: |
-        echo "Updating request with test results..."
-        REQUEST_SYS_ID="${{ steps.create_request.outputs.request_sys_id }}"
+        echo "Final Results:"
+        echo "HTTP Code: $HTTP_CODE"
+        echo "Connect Time: $TIME_CONNECT seconds"
+        echo "Total Time: $TIME_TOTAL seconds"
         
-        WORK_NOTES="GitHub Action test completed successfully\\nTest run: ${{ github.run_id }}\\nCompleted at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        
-        curl -s -X PUT \
-          "https://${SERVICENOW_INSTANCE}/api/now/table/sc_request/${REQUEST_SYS_ID}" \
-          -H "Accept: application/json" \
-          -H "Content-Type: application/json" \
-          -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)" \
-          -d '{
-            "work_notes": "'"$WORK_NOTES"'",
-            "close_notes": "GitHub Action test completed successfully"
-          }'
-        
-        echo "✅ Request updated with test results"
-        
-    - name: Print Test Summary
-      if: always()
-      run: |
-        echo ""
-        echo "========================================"
-        echo "        SERVICENOW TEST SUMMARY"
-        echo "========================================"
-        echo "Request Number: ${{ steps.create_request.outputs.request_number }}"
-        echo "Repository: ${{ github.repository }}"
-        echo "Commit: ${{ github.sha }}"
-        echo "Branch: ${{ github.ref_name }}"
-        echo "Test Run ID: ${{ github.run_id }}"
-        echo ""
-        echo "ServiceNow URL: https://${{ env.SERVICENOW_INSTANCE }}/nav_to.do?uri=sc_request.do?sys_id=${{ steps.create_request.outputs.request_sys_id }}"
-        echo "========================================"
+        if [ "$HTTP_CODE" = "200" ]; then
+          echo "✅ SUCCESS: API authentication working!"
+        elif [ "$HTTP_CODE" = "401" ]; then
+          echo "❌ Authentication failed - check username/password"
+        elif [ "$HTTP_CODE" = "403" ]; then
+          echo "❌ Access forbidden - check user permissions"
+        else
+          echo "❌ Unexpected response: $HTTP_CODE"
+        fi
