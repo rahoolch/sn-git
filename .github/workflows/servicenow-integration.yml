@@ -1,0 +1,135 @@
+name: ServiceNow Case Integration
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  SERVICENOW_INSTANCE: ${{ secrets.SERVICENOW_INSTANCE }}
+  SERVICENOW_USERNAME: ${{ secrets.SERVICENOW_USERNAME }}
+  SERVICENOW_PASSWORD: ${{ secrets.SERVICENOW_PASSWORD }}
+
+jobs:
+  create-and-monitor-case:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Run your application/tests
+      run: |
+        # Replace this with your actual code execution
+        echo "Running application code..."
+        npm install  # or your build/test commands
+        npm test
+        
+    - name: Create ServiceNow Case
+      id: create_case
+      run: |
+        # Create case in ServiceNow
+        RESPONSE=$(curl -s -X POST \
+          "https://${SERVICENOW_INSTANCE}/api/now/table/sn_customerservice_case" \
+          -H "Accept: application/json" \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)" \
+          -d '{
+            "short_description": "GitHub Action Deployment Request - '"${{ github.repository }}"'",
+            "description": "Automated deployment request from GitHub Action\nRepository: '"${{ github.repository }}"'\nCommit: '"${{ github.sha }}"'\nBranch: '"${{ github.ref_name }}"'\nWorkflow: '"${{ github.workflow }}"'",
+            "priority": "3",
+            "state": "1",
+            "contact_type": "email",
+            "category": "request"
+          }')
+        
+        # Extract case number and sys_id
+        CASE_NUMBER=$(echo $RESPONSE | jq -r '.result.number')
+        CASE_SYS_ID=$(echo $RESPONSE | jq -r '.result.sys_id')
+        
+        echo "case_number=$CASE_NUMBER" >> $GITHUB_OUTPUT
+        echo "case_sys_id=$CASE_SYS_ID" >> $GITHUB_OUTPUT
+        echo "Created ServiceNow Case: $CASE_NUMBER"
+        
+    - name: Monitor Case Status
+      id: monitor_case
+      run: |
+        CASE_SYS_ID="${{ steps.create_case.outputs.case_sys_id }}"
+        CASE_NUMBER="${{ steps.create_case.outputs.case_number }}"
+        MAX_ATTEMPTS=30
+        SLEEP_INTERVAL=60
+        
+        echo "Monitoring case $CASE_NUMBER for approval..."
+        
+        for i in $(seq 1 $MAX_ATTEMPTS); do
+          echo "Check #$i - Polling case status..."
+          
+          RESPONSE=$(curl -s -X GET \
+            "https://${SERVICENOW_INSTANCE}/api/now/table/sn_customerservice_case/${CASE_SYS_ID}" \
+            -H "Accept: application/json" \
+            -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)")
+          
+          STATE=$(echo $RESPONSE | jq -r '.result.state')
+          STATE_LABEL=$(echo $RESPONSE | jq -r '.result.state.display_value // .result.state')
+          
+          echo "Case $CASE_NUMBER Status: $STATE_LABEL"
+          
+          # Check if case is resolved/approved (state 6 = Resolved, state 3 = Awaiting Info, etc.)
+          # Adjust these state numbers based on your ServiceNow configuration
+          case $STATE in
+            "6"|"resolved")
+              echo "✅ Case $CASE_NUMBER has been APPROVED/RESOLVED!"
+              echo "status=approved" >> $GITHUB_OUTPUT
+              exit 0
+              ;;
+            "8"|"closed")
+              echo "❌ Case $CASE_NUMBER has been CLOSED/REJECTED!"
+              echo "status=rejected" >> $GITHUB_OUTPUT
+              exit 1
+              ;;
+            "7"|"cancelled")
+              echo "⚠️ Case $CASE_NUMBER has been CANCELLED!"
+              echo "status=cancelled" >> $GITHUB_OUTPUT
+              exit 1
+              ;;
+          esac
+          
+          if [ $i -eq $MAX_ATTEMPTS ]; then
+            echo "⏰ Timeout: Case $CASE_NUMBER still pending after maximum attempts"
+            echo "status=timeout" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          echo "Waiting ${SLEEP_INTERVAL} seconds before next check..."
+          sleep $SLEEP_INTERVAL
+        done
+        
+    - name: Print Final Results
+      if: always()
+      run: |
+        echo "=================== SERVICENOW INTEGRATION RESULTS ==================="
+        echo "Case Number: ${{ steps.create_case.outputs.case_number }}"
+        echo "Case Status: ${{ steps.monitor_case.outputs.status }}"
+        echo "Repository: ${{ github.repository }}"
+        echo "Commit SHA: ${{ github.sha }}"
+        echo "Branch: ${{ github.ref_name }}"
+        echo "===================================================================="
+        
+    - name: Update Case with Results
+      if: always()
+      run: |
+        STATUS="${{ steps.monitor_case.outputs.status }}"
+        CASE_SYS_ID="${{ steps.create_case.outputs.case_sys_id }}"
+        
+        WORK_NOTES="GitHub Action completed with status: $STATUS\nWorkflow URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        
+        curl -s -X PUT \
+          "https://${SERVICENOW_INSTANCE}/api/now/table/sn_customerservice_case/${CASE_SYS_ID}" \
+          -H "Accept: application/json" \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)" \
+          -d '{
+            "work_notes": "'"$WORK_NOTES"'"
+          }'
