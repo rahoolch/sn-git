@@ -21,6 +21,8 @@ jobs:
     - name: Test ServiceNow Connection
       run: |
         echo "Testing ServiceNow connection..."
+        echo "https://${SERVICENOW_INSTANCE}/api/now/table/sys_user?sysparm_limit=1"
+        echo "${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD}"
         HTTP_CODE=$(curl -s -w "%{http_code}" -o /dev/null \
           "https://${SERVICENOW_INSTANCE}/api/now/table/sys_user?sysparm_limit=1" \
           -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)")

@@ -140,3 +140,4 @@ vite.config.ts.timestamp-*
 
 # Ignore test file
 test*.sh
+curl_test.sh
