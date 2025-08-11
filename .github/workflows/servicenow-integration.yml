@@ -46,7 +46,7 @@ jobs:
         fi
         
         # Show URL structure (without revealing full domain)
-        echo "URL will be: https://${INSTANCE:0:5}***${INSTANCE: -4}/api/now/table/sys_user"
+        echo "URL will be: https://${INSTANCE:0:5}***${INSTANCE: -4}/api/now/table/sc_request"
       
     - name: Debug Secret Values (Safe Method)
       run: |
@@ -72,7 +72,7 @@ jobs:
         fi
         
         # Show URL structure (without revealing full domain)
-        echo "URL will be: https://${SERVICENOW_INSTANCE:0:5}***${SERVICENOW_INSTANCE: -4}/api/now/table/sys_user"
+        echo "URL will be: https://${SERVICENOW_INSTANCE:0:5}***${SERVICENOW_INSTANCE: -4}/api/now/table/sc_request"
         
     - name: Debug Authentication
       run: |
@@ -93,7 +93,7 @@ jobs:
         RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" \
           --connect-timeout 30 \
           --max-time 60 \
-          "https://${SERVICENOW_INSTANCE}/api/now/table/sys_user?sysparm_limit=1&sysparm_fields=sys_id,user_name,active" \
+          "https://${SERVICENOW_INSTANCE}/api/now/table/sc_request?sysparm_limit=1&sysparm_fields=sys_id,user_name,active" \
           -H "Accept: application/json" \
           -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)" \
           2>&1)
@@ -130,7 +130,7 @@ jobs:
         HTTP_CODE=$(curl -s -w "%{http_code}" -o /dev/null \
           --connect-timeout 30 \
           --max-time 120 \
-          "https://${SERVICENOW_INSTANCE}/api/now/table/sys_user?sysparm_limit=1" \
+          "https://${SERVICENOW_INSTANCE}/api/now/table/sc_request?sysparm_limit=1" \
           -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)")
         
         echo "HTTP Response Code: $HTTP_CODE"
