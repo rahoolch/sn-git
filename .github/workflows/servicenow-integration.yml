@@ -18,19 +18,56 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
+    - name: Debug Secret Values (Safe Method)
+      run: |
+        echo "Checking if secrets are properly set..."
+        
+        # Check if variables are set (without revealing values)
+        if [ -z "$SERVICENOW_INSTANCE" ]; then
+          echo "❌ SERVICENOW_INSTANCE is empty or not set"
+        else
+          echo "✅ SERVICENOW_INSTANCE is set (length: ${#SERVICENOW_INSTANCE})"
+        fi
+        
+        if [ -z "$SERVICENOW_USERNAME" ]; then
+          echo "❌ SERVICENOW_USERNAME is empty or not set"
+        else
+          echo "✅ SERVICENOW_USERNAME is set (length: ${#SERVICENOW_USERNAME})"
+        fi
+        
+        if [ -z "$SERVICENOW_PASSWORD" ]; then
+          echo "❌ SERVICENOW_PASSWORD is empty or not set"
+        else
+          echo "✅ SERVICENOW_PASSWORD is set (length: ${#SERVICENOW_PASSWORD})"
+        fi
+        
+        # Show URL structure (without revealing full domain)
+        echo "URL will be: https://${SERVICENOW_INSTANCE:0:5}***${SERVICENOW_INSTANCE: -4}/api/now/table/sys_user"
+        
     - name: Test ServiceNow Connection
       run: |
         echo "Testing ServiceNow connection..."
-        echo "https://${SERVICENOW_INSTANCE}/api/now/table/sys_user?sysparm_limit=1"
-        echo "${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD}"
-        HTTP_CODE=$(curl -s -w "%{http_code}" -o /dev/null \
+        echo "Instance: $SERVICENOW_INSTANCE"
+        echo "Username: $SERVICENOW_USERNAME"
+        echo "Testing URL: https://${SERVICENOW_INSTANCE}/api/now/table/sys_user?sysparm_limit=1"
+        
+        # Test with verbose output and save response
+        RESPONSE=$(curl -v -s -w "\nHTTP_CODE:%{http_code}\nTIME_TOTAL:%{time_total}" \
           "https://${SERVICENOW_INSTANCE}/api/now/table/sys_user?sysparm_limit=1" \
-          -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)")
+          -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)" \
+          2>&1)
+        
+        echo "Full response:"
+        echo "$RESPONSE"
+        
+        HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+        echo "Extracted HTTP Code: $HTTP_CODE"
         
         if [ "$HTTP_CODE" = "200" ]; then
           echo "✅ ServiceNow connection successful"
         else
           echo "❌ ServiceNow connection failed (HTTP $HTTP_CODE)"
+          echo "Check the logs above for detailed error information"
           exit 1
         fi
         
