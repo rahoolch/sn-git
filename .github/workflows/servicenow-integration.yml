@@ -6,9 +6,9 @@ on:
     branches: [ main ]
 
 env:
-  SERVICENOW_INSTANCE: ${{ secrets.SERVICENOW_INSTANCE }}
-  SERVICENOW_USERNAME: ${{ secrets.SERVICENOW_USERNAME }}
-  SERVICENOW_PASSWORD: ${{ secrets.SERVICENOW_PASSWORD }}
+  SERVICENOW_INSTANCE: 'dev195428.service-now.com'
+  SERVICENOW_USERNAME: 'git_test'
+  SERVICENOW_PASSWORD: '%xl59+k5I@>=JUHRM[*Jl[7zx&-4,!5]#0iKg=[2?K+8@S%^Lh,eacgO^!$bzAwM-KCsTbLDtnK7L:%75OyN8fleF#hN.'
 
 jobs:
   test-servicenow:
