@@ -40,64 +40,80 @@ jobs:
             "short_description": "GitHub Action Deployment Request - '"${{ github.repository }}"'",
             "description": "Automated deployment request from GitHub Action\nRepository: '"${{ github.repository }}"'\nCommit: '"${{ github.sha }}"'\nBranch: '"${{ github.ref_name }}"'\nWorkflow: '"${{ github.workflow }}"'",
             "priority": "3",
-            "state": "1",
-            "contact_type": "email",
-            "category": "request"
+            "state": "-5",
+            "requested_for": "'"${SERVICENOW_USERNAME}"'",
+            "request_state": "submitted_for_approval"
           }')
         
-        # Extract case number and sys_id
-        CASE_NUMBER=$(echo $RESPONSE | jq -r '.result.number')
-        CASE_SYS_ID=$(echo $RESPONSE | jq -r '.result.sys_id')
+        # Extract request number and sys_id
+        REQUEST_NUMBER=$(echo $RESPONSE | jq -r '.result.number')
+        REQUEST_SYS_ID=$(echo $RESPONSE | jq -r '.result.sys_id')
         
-        echo "case_number=$CASE_NUMBER" >> $GITHUB_OUTPUT
-        echo "case_sys_id=$CASE_SYS_ID" >> $GITHUB_OUTPUT
-        echo "Created ServiceNow Case: $CASE_NUMBER"
+        echo "request_number=$REQUEST_NUMBER" >> $GITHUB_OUTPUT
+        echo "request_sys_id=$REQUEST_SYS_ID" >> $GITHUB_OUTPUT
+        echo "Created ServiceNow Request: $REQUEST_NUMBER"
         
-    - name: Monitor Case Status
-      id: monitor_case
+    - name: Monitor Request Status
+      id: monitor_request
       run: |
-        CASE_SYS_ID="${{ steps.create_case.outputs.case_sys_id }}"
-        CASE_NUMBER="${{ steps.create_case.outputs.case_number }}"
+        REQUEST_SYS_ID="${{ steps.create_case.outputs.request_sys_id }}"
+        REQUEST_NUMBER="${{ steps.create_case.outputs.request_number }}"
         MAX_ATTEMPTS=30
         SLEEP_INTERVAL=60
         
-        echo "Monitoring case $CASE_NUMBER for approval..."
+        echo "Monitoring request $REQUEST_NUMBER for approval..."
         
         for i in $(seq 1 $MAX_ATTEMPTS); do
-          echo "Check #$i - Polling case status..."
+          echo "Check #$i - Polling request status..."
           
           RESPONSE=$(curl -s -X GET \
-            "https://${SERVICENOW_INSTANCE}/api/now/table/sc_request/${CASE_SYS_ID}" \
+            "https://${SERVICENOW_INSTANCE}/api/now/table/sc_request/${REQUEST_SYS_ID}" \
             -H "Accept: application/json" \
             -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)")
           
-          STATE=$(echo $RESPONSE | jq -r '.result.state')
-          STATE_LABEL=$(echo $RESPONSE | jq -r '.result.state.display_value // .result.state')
+          REQUEST_STATE=$(echo $RESPONSE | jq -r '.result.request_state')
+          APPROVAL=$(echo $RESPONSE | jq -r '.result.approval // "not_requested"')
           
-          echo "Case $CASE_NUMBER Status: $STATE_LABEL"
+          echo "Request $REQUEST_NUMBER - State: $REQUEST_STATE, Approval: $APPROVAL"
           
-          # Check if case is resolved/approved (state 6 = Resolved, state 3 = Awaiting Info, etc.)
-          # Adjust these state numbers based on your ServiceNow configuration
-          case $STATE in
-            "6"|"resolved")
-              echo "✅ Case $CASE_NUMBER has been APPROVED/RESOLVED!"
-              echo "status=approved" >> $GITHUB_OUTPUT
-              exit 0
+          # Check request states for sc_request
+          case $REQUEST_STATE in
+            "closed_complete")
+              if [ "$APPROVAL" = "approved" ]; then
+                echo "✅ Request $REQUEST_NUMBER has been APPROVED and COMPLETED!"
+                echo "status=approved" >> $GITHUB_OUTPUT
+                exit 0
+              else
+                echo "❌ Request $REQUEST_NUMBER completed but not approved!"
+                echo "status=completed_not_approved" >> $GITHUB_OUTPUT
+                exit 1
+              fi
               ;;
-            "8"|"closed")
-              echo "❌ Case $CASE_NUMBER has been CLOSED/REJECTED!"
+            "closed_rejected"|"closed_cancelled")
+              echo "❌ Request $REQUEST_NUMBER has been REJECTED/CANCELLED!"
               echo "status=rejected" >> $GITHUB_OUTPUT
               exit 1
               ;;
-            "7"|"cancelled")
-              echo "⚠️ Case $CASE_NUMBER has been CANCELLED!"
-              echo "status=cancelled" >> $GITHUB_OUTPUT
+            "closed_incomplete")
+              echo "⚠️ Request $REQUEST_NUMBER closed as incomplete!"
+              echo "status=incomplete" >> $GITHUB_OUTPUT
               exit 1
               ;;
           esac
           
+          # Also check pure approval status
+          if [ "$APPROVAL" = "approved" ]; then
+            echo "✅ Request $REQUEST_NUMBER has been APPROVED!"
+            echo "status=approved" >> $GITHUB_OUTPUT
+            exit 0
+          elif [ "$APPROVAL" = "rejected" ]; then
+            echo "❌ Request $REQUEST_NUMBER has been REJECTED!"
+            echo "status=rejected" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
           if [ $i -eq $MAX_ATTEMPTS ]; then
-            echo "⏰ Timeout: Case $CASE_NUMBER still pending after maximum attempts"
+            echo "⏰ Timeout: Request $REQUEST_NUMBER still pending after maximum attempts"
             echo "status=timeout" >> $GITHUB_OUTPUT
             exit 1
           fi
@@ -110,23 +126,23 @@ jobs:
       if: always()
       run: |
         echo "=================== SERVICENOW INTEGRATION RESULTS ==================="
-        echo "Case Number: ${{ steps.create_case.outputs.case_number }}"
-        echo "Case Status: ${{ steps.monitor_case.outputs.status }}"
+        echo "Request Number: ${{ steps.create_case.outputs.request_number }}"
+        echo "Request Status: ${{ steps.monitor_request.outputs.status }}"
         echo "Repository: ${{ github.repository }}"
         echo "Commit SHA: ${{ github.sha }}"
         echo "Branch: ${{ github.ref_name }}"
         echo "===================================================================="
         
-    - name: Update Case with Results
+    - name: Update Request with Results
       if: always()
       run: |
-        STATUS="${{ steps.monitor_case.outputs.status }}"
-        CASE_SYS_ID="${{ steps.create_case.outputs.case_sys_id }}"
+        STATUS="${{ steps.monitor_request.outputs.status }}"
+        REQUEST_SYS_ID="${{ steps.create_case.outputs.request_sys_id }}"
         
         WORK_NOTES="GitHub Action completed with status: $STATUS\nWorkflow URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
         
         curl -s -X PUT \
-          "https://${SERVICENOW_INSTANCE}/api/now/table/sc_request/${CASE_SYS_ID}" \
+          "https://${SERVICENOW_INSTANCE}/api/now/table/sc_request/${REQUEST_SYS_ID}" \
           -H "Accept: application/json" \
           -H "Content-Type: application/json" \
           -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)" \
