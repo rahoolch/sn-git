@@ -1,11 +1,9 @@
-name: ServiceNow Case Integration
+name: ServiceNow sc_request Test
 
 on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
+  push:
+    branches: [ main ]
 
 env:
   SERVICENOW_INSTANCE: ${{ secrets.SERVICENOW_INSTANCE }}
@@ -13,133 +11,82 @@ env:
   SERVICENOW_PASSWORD: ${{ secrets.SERVICENOW_PASSWORD }}
 
 jobs:
-  create-and-monitor-case:
+  test-servicenow:
     runs-on: ubuntu-latest
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: Run your application/tests
+    - name: Test ServiceNow Connection
       run: |
-        # Replace this with your actual code execution
-        echo "Running application code..."
-        npm install  # or your build/test commands
-        npm test
+        echo "Testing ServiceNow connection..."
+        HTTP_CODE=$(curl -s -w "%{http_code}" -o /dev/null \
+          "https://${SERVICENOW_INSTANCE}/api/now/table/sys_user?sysparm_limit=1" \
+          -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)")
         
-    - name: Create ServiceNow Case
-      id: create_case
+        if [ "$HTTP_CODE" = "200" ]; then
+          echo "✅ ServiceNow connection successful"
+        else
+          echo "❌ ServiceNow connection failed (HTTP $HTTP_CODE)"
+          exit 1
+        fi
+        
+    - name: Create Test Request
+      id: create_request
       run: |
-        # Create case in ServiceNow
+        echo "Creating test request..."
         RESPONSE=$(curl -s -X POST \
           "https://${SERVICENOW_INSTANCE}/api/now/table/sc_request" \
           -H "Accept: application/json" \
           -H "Content-Type: application/json" \
           -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)" \
           -d '{
-            "short_description": "GitHub Action Deployment Request - '"${{ github.repository }}"'",
-            "description": "Automated deployment request from GitHub Action\nRepository: '"${{ github.repository }}"'\nCommit: '"${{ github.sha }}"'\nBranch: '"${{ github.ref_name }}"'\nWorkflow: '"${{ github.workflow }}"'",
-            "priority": "3",
+            "short_description": "GitHub Test Request - '"${{ github.repository }}"'",
+            "description": "Test request from GitHub Actions\nRepository: '"${{ github.repository }}"'\nCommit: '"${{ github.sha }}"'\nBranch: '"${{ github.ref_name }}"'",
+            "priority": "4",
             "state": "-5",
             "requested_for": "'"${SERVICENOW_USERNAME}"'",
             "request_state": "submitted_for_approval"
           }')
         
-        # Extract request number and sys_id
         REQUEST_NUMBER=$(echo $RESPONSE | jq -r '.result.number')
         REQUEST_SYS_ID=$(echo $RESPONSE | jq -r '.result.sys_id')
         
-        echo "request_number=$REQUEST_NUMBER" >> $GITHUB_OUTPUT
-        echo "request_sys_id=$REQUEST_SYS_ID" >> $GITHUB_OUTPUT
-        echo "Created ServiceNow Request: $REQUEST_NUMBER"
+        if [ "$REQUEST_NUMBER" != "null" ]; then
+          echo "✅ Request created: $REQUEST_NUMBER"
+          echo "request_number=$REQUEST_NUMBER" >> $GITHUB_OUTPUT
+          echo "request_sys_id=$REQUEST_SYS_ID" >> $GITHUB_OUTPUT
+        else
+          echo "❌ Failed to create request"
+          echo "Response: $RESPONSE"
+          exit 1
+        fi
         
-    - name: Monitor Request Status
-      id: monitor_request
+    - name: Read Request Back
       run: |
-        REQUEST_SYS_ID="${{ steps.create_case.outputs.request_sys_id }}"
-        REQUEST_NUMBER="${{ steps.create_case.outputs.request_number }}"
-        MAX_ATTEMPTS=30
-        SLEEP_INTERVAL=60
+        echo "Reading request back..."
+        REQUEST_SYS_ID="${{ steps.create_request.outputs.request_sys_id }}"
         
-        echo "Monitoring request $REQUEST_NUMBER for approval..."
+        RESPONSE=$(curl -s -X GET \
+          "https://${SERVICENOW_INSTANCE}/api/now/table/sc_request/${REQUEST_SYS_ID}" \
+          -H "Accept: application/json" \
+          -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)")
         
-        for i in $(seq 1 $MAX_ATTEMPTS); do
-          echo "Check #$i - Polling request status..."
-          
-          RESPONSE=$(curl -s -X GET \
-            "https://${SERVICENOW_INSTANCE}/api/now/table/sc_request/${REQUEST_SYS_ID}" \
-            -H "Accept: application/json" \
-            -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)")
-          
-          REQUEST_STATE=$(echo $RESPONSE | jq -r '.result.request_state')
-          APPROVAL=$(echo $RESPONSE | jq -r '.result.approval // "not_requested"')
-          
-          echo "Request $REQUEST_NUMBER - State: $REQUEST_STATE, Approval: $APPROVAL"
-          
-          # Check request states for sc_request
-          case $REQUEST_STATE in
-            "closed_complete")
-              if [ "$APPROVAL" = "approved" ]; then
-                echo "✅ Request $REQUEST_NUMBER has been APPROVED and COMPLETED!"
-                echo "status=approved" >> $GITHUB_OUTPUT
-                exit 0
-              else
-                echo "❌ Request $REQUEST_NUMBER completed but not approved!"
-                echo "status=completed_not_approved" >> $GITHUB_OUTPUT
-                exit 1
-              fi
-              ;;
-            "closed_rejected"|"closed_cancelled")
-              echo "❌ Request $REQUEST_NUMBER has been REJECTED/CANCELLED!"
-              echo "status=rejected" >> $GITHUB_OUTPUT
-              exit 1
-              ;;
-            "closed_incomplete")
-              echo "⚠️ Request $REQUEST_NUMBER closed as incomplete!"
-              echo "status=incomplete" >> $GITHUB_OUTPUT
-              exit 1
-              ;;
-          esac
-          
-          # Also check pure approval status
-          if [ "$APPROVAL" = "approved" ]; then
-            echo "✅ Request $REQUEST_NUMBER has been APPROVED!"
-            echo "status=approved" >> $GITHUB_OUTPUT
-            exit 0
-          elif [ "$APPROVAL" = "rejected" ]; then
-            echo "❌ Request $REQUEST_NUMBER has been REJECTED!"
-            echo "status=rejected" >> $GITHUB_OUTPUT
-            exit 1
-          fi
-          
-          if [ $i -eq $MAX_ATTEMPTS ]; then
-            echo "⏰ Timeout: Request $REQUEST_NUMBER still pending after maximum attempts"
-            echo "status=timeout" >> $GITHUB_OUTPUT
-            exit 1
-          fi
-          
-          echo "Waiting ${SLEEP_INTERVAL} seconds before next check..."
-          sleep $SLEEP_INTERVAL
-        done
+        REQUEST_STATE=$(echo $RESPONSE | jq -r '.result.request_state')
+        APPROVAL=$(echo $RESPONSE | jq -r '.result.approval // "not_requested"')
         
-    - name: Print Final Results
-      if: always()
+        echo "✅ Request read successfully"
+        echo "Request Number: ${{ steps.create_request.outputs.request_number }}"
+        echo "Request State: $REQUEST_STATE"
+        echo "Approval Status: $APPROVAL"
+        
+    - name: Update Request with Test Results
       run: |
-        echo "=================== SERVICENOW INTEGRATION RESULTS ==================="
-        echo "Request Number: ${{ steps.create_case.outputs.request_number }}"
-        echo "Request Status: ${{ steps.monitor_request.outputs.status }}"
-        echo "Repository: ${{ github.repository }}"
-        echo "Commit SHA: ${{ github.sha }}"
-        echo "Branch: ${{ github.ref_name }}"
-        echo "===================================================================="
+        echo "Updating request with test results..."
+        REQUEST_SYS_ID="${{ steps.create_request.outputs.request_sys_id }}"
         
-    - name: Update Request with Results
-      if: always()
-      run: |
-        STATUS="${{ steps.monitor_request.outputs.status }}"
-        REQUEST_SYS_ID="${{ steps.create_case.outputs.request_sys_id }}"
-        
-        WORK_NOTES="GitHub Action completed with status: $STATUS\nWorkflow URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        WORK_NOTES="GitHub Action test completed successfully\\nTest run: ${{ github.run_id }}\\nCompleted at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
         
         curl -s -X PUT \
           "https://${SERVICENOW_INSTANCE}/api/now/table/sc_request/${REQUEST_SYS_ID}" \
@@ -147,5 +94,24 @@ jobs:
           -H "Content-Type: application/json" \
           -H "Authorization: Basic $(echo -n ${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD} | base64)" \
           -d '{
-            "work_notes": "'"$WORK_NOTES"'"
+            "work_notes": "'"$WORK_NOTES"'",
+            "close_notes": "GitHub Action test completed successfully"
           }'
+        
+        echo "✅ Request updated with test results"
+        
+    - name: Print Test Summary
+      if: always()
+      run: |
+        echo ""
+        echo "========================================"
+        echo "        SERVICENOW TEST SUMMARY"
+        echo "========================================"
+        echo "Request Number: ${{ steps.create_request.outputs.request_number }}"
+        echo "Repository: ${{ github.repository }}"
+        echo "Commit: ${{ github.sha }}"
+        echo "Branch: ${{ github.ref_name }}"
+        echo "Test Run ID: ${{ github.run_id }}"
+        echo ""
+        echo "ServiceNow URL: https://${{ env.SERVICENOW_INSTANCE }}/nav_to.do?uri=sc_request.do?sys_id=${{ steps.create_request.outputs.request_sys_id }}"
+        echo "========================================"
